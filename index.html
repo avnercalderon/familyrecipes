@@ -260,7 +260,7 @@ code{background:#eef2ec;padding:2px 6px;border-radius:5px;font-size:13px;directi
 /* ======================================================================
    כתובת השרת — הדבק כאן את כתובת ה-Web app של Apps Script (מסתיימת ב-/exec)
    ====================================================================== */
-const API = "https://script.google.com/macros/s/AKfycbzTGmpAVrG6ikIaSJiDjIkBnWKJS6tsHhUPre1ikDrV5gWs5JyJBRbhnOY0FpasXX8VSg/exec";
+const API = "";
 /* ====================================================================== */
 
 let apiUrl = API;
@@ -305,7 +305,7 @@ function catColor(n){ const f=allCats().find(c=>c.n===n); return f?f.c:'#5c6b62'
 const UNITS = ['','גרם','ק"ג','מ"ל','ליטר','כוס','כף','כפית','יחידה','חבילה','קופסה','שן','חבורה','קורט','לפי הטעם'];
 
 /* ---------- מצב ---------- */
-let RECIPES=[], SHOP=[], SEL=new Set(), favOnly=false, sortBy='updated';
+let RECIPES=[], SHOP=[], SEL=new Set(), favOnly=false, noCatOnly=false, sortBy='updated';
 let cur=null, curServings=0, editing=null, cookState=null, tick=null, wake=null, shopTimer=null;
 
 /* ---------- עזרים ---------- */
@@ -326,7 +326,7 @@ function toast(m){ const t=document.getElementById('toast'); t.textContent=m; t.
   clearTimeout(t._x); t._x=setTimeout(()=>t.classList.remove('on'),2600); }
 function openModal(h){ document.getElementById('modal').innerHTML=h; document.getElementById('ov').classList.add('on'); }
 function closeModal(){ document.getElementById('ov').classList.remove('on'); }
-function catsOf(r){ return (r.cats && r.cats.length) ? r.cats : (r.cat?[r.cat]:['אחר']); }
+function catsOf(r){ if(r.cats && r.cats.length) return r.cats; return r.cat?[r.cat]:[]; }
 
 /* ---------- ניווט ---------- */
 function go(v){
@@ -359,7 +359,7 @@ async function reload(){
   document.getElementById('listArea').innerHTML='<div class="loading"><div class="spin"></div>טוען את הספר…</div>';
   try{
     const d = await apiGet();
-    RECIPES = (d.recipes||[]).map(r=>{ if(!r.cats) r.cats = r.cat?[r.cat]:['אחר']; return r; });
+    RECIPES = (d.recipes||[]).map(r=>{ if(!r.cats) r.cats = r.cat?[r.cat]:[]; return r; });
     SHOP = d.shopping||[];
     CUSTOM = d.categories||[];
     document.getElementById('sub').textContent = RECIPES.length + ' מתכונים בספר';
@@ -395,25 +395,39 @@ document.addEventListener('visibilitychange',()=>{
 });
 
 /* ---------- סינון ותצוגה ---------- */
+let CHIP_NAMES=[];
 function renderChips(){
   const counts={};
-  RECIPES.forEach(r=>catsOf(r).forEach(c=>counts[c]=(counts[c]||0)+1));
+  let noCat=0;
+  RECIPES.forEach(r=>{
+    const cs=catsOf(r);
+    if(!cs.length) noCat++;
+    cs.forEach(c=>counts[c]=(counts[c]||0)+1);
+  });
   const used = allCats().filter(c=>counts[c.n]);
   Object.keys(counts).forEach(n=>{ if(!used.some(c=>c.n===n)) used.push({n, c:PALETTE[hash(n)%PALETTE.length]}); });
-  let h = `<button class="chip ${SEL.size===0&&!favOnly?'on':''}" onclick="clearFilter()">הכל (${RECIPES.length})</button>`;
+  CHIP_NAMES = used.map(c=>c.n);
+  let h = `<button class="chip ${SEL.size===0&&!favOnly&&!noCatOnly?'on':''}" onclick="clearFilter()">הכל (${RECIPES.length})</button>`;
   h += `<button class="chip ${favOnly?'on':''}" onclick="toggleFavFilter()">❤️ מועדפים</button>`;
-  used.forEach(c=>{
+  used.forEach((c,i)=>{
     const on = SEL.has(c.n);
-    h += `<button class="chip ${on?'on':''}" style="${on?'':'background:'+c.c+'22;color:#dbe7df'}" onclick="toggleCat('${esc(c.n)}')">${esc(c.n)} (${counts[c.n]})</button>`;
+    h += `<button class="chip ${on?'on':''}" style="${on?'':'background:'+c.c+'22;color:#dbe7df'}" onclick="toggleCatIdx(${i})">${esc(c.n)} (${counts[c.n]})</button>`;
   });
+  if(noCat) h += `<button class="chip ${noCatOnly?'on':''}" onclick="toggleNoCat()">ללא קטגוריה (${noCat})</button>`;
   document.getElementById('chips').innerHTML=h;
   const fh=document.getElementById('fhint');
   fh.style.display = SEL.size>1?'block':'none';
   fh.textContent = SEL.size>1 ? 'מוצגים מתכונים שמסומנים בכל הקטגוריות שנבחרו' : '';
 }
-function toggleCat(n){ SEL.has(n)?SEL.delete(n):SEL.add(n); renderChips(); renderList(); }
+function toggleCatIdx(i){
+  const n=CHIP_NAMES[i]; if(n===undefined) return;
+  noCatOnly=false;
+  SEL.has(n)?SEL.delete(n):SEL.add(n);
+  renderChips(); renderList();
+}
+function toggleNoCat(){ noCatOnly=!noCatOnly; SEL.clear(); renderChips(); renderList(); }
 function toggleFavFilter(){ favOnly=!favOnly; renderChips(); renderList(); }
-function clearFilter(){ SEL.clear(); favOnly=false; renderChips(); renderList(); }
+function clearFilter(){ SEL.clear(); favOnly=false; noCatOnly=false; renderChips(); renderList(); }
 function openSort(){
   openModal(`<h3>מיון הספר</h3>
     ${[['updated','עודכן לאחרונה'],['title','לפי שם א׳–ת׳'],['rating','דירוג גבוה'],['time','זמן הכנה קצר'],['cooked','הכי מבושלים']]
@@ -424,6 +438,7 @@ function renderList(){
   const q=(document.getElementById('q').value||'').trim().toLowerCase();
   let arr=RECIPES.slice();
   if(favOnly) arr=arr.filter(r=>r.fav);
+  if(noCatOnly) arr=arr.filter(r=>!catsOf(r).length);
   if(SEL.size) arr=arr.filter(r=>{ const cs=catsOf(r); return [...SEL].every(s=>cs.includes(s)); });
   if(q) arr=arr.filter(r =>
     (r.title||'').toLowerCase().includes(q) ||
@@ -701,7 +716,7 @@ function drawEditor(){
       <input class="t" value="${esc(e.desc)}" oninput="editing.desc=this.value" placeholder="מה מיוחד בו"></div>
 
     <div class="field">
-      <label class="f">קטגוריות — אפשר לבחור כמה שרוצים</label>
+      <label class="f">קטגוריות — אפשר כמה, אפשר גם בלי</label>
       <div class="pick" id="catPick">${catPickHTML()}</div>
       <div class="btnrow" style="margin-top:9px">
         <input class="t" id="newCat" placeholder="קטגוריה חדשה" style="flex:1;min-width:140px">
@@ -759,22 +774,24 @@ function drawEditor(){
   <div style="height:20px"></div>`;
 }
 function catPickHTML(){
-  return allCats().map(c=>{
+  return allCats().map((c,i)=>{
     const on=(editing.cats||[]).includes(c.n);
-    return `<button class="${on?'on':''}" style="${on?'background:'+c.c:''}" onclick="toggleEditCat('${esc(c.n)}')">${esc(c.n)}</button>`;
+    return `<button class="${on?'on':''}" style="${on?'background:'+c.c:''}" onclick="toggleEditCat(${i})">${esc(c.n)}</button>`;
   }).join('');
 }
-function toggleEditCat(n){
+function toggleEditCat(i){
+  const n = allCats()[i] && allCats()[i].n;
+  if(n===undefined) return;
   editing.cats=editing.cats||[];
-  const i=editing.cats.indexOf(n);
-  if(i>-1) editing.cats.splice(i,1); else editing.cats.push(n);
+  const k=editing.cats.indexOf(n);
+  if(k>-1) editing.cats.splice(k,1); else editing.cats.push(n);
   document.getElementById('catPick').innerHTML=catPickHTML();
 }
 async function addCategory(){
   const inp=document.getElementById('newCat');
   const n=(inp.value||'').trim();
   if(!n) return;
-  if(allCats().some(c=>c.n===n)){ toggleEditCat(n); inp.value=''; return; }
+  if(allCats().some(c=>c.n===n)){ const k=allCats().findIndex(c=>c.n===n); toggleEditCat(k); inp.value=''; return; }
   CUSTOM.push(n);
   editing.cats=editing.cats||[]; editing.cats.push(n);
   inp.value='';
@@ -786,7 +803,7 @@ function ingRow(it,i){
   return `<div class="ingrow">
     <input class="t" value="${esc(it.a)}" placeholder="כמות" oninput="editing.ingredients[${i}].a=this.value">
     <select class="t" onchange="editing.ingredients[${i}].u=this.value">
-      ${UNITS.map(u=>`<option value="${u}" ${u===it.u?'selected':''}>${u||'יחידה?'}</option>`).join('')}
+      ${UNITS.map(u=>`<option value="${esc(u)}" ${u===it.u?'selected':''}>${esc(u)||'יחידה?'}</option>`).join('')}
     </select>
     <input class="t" value="${esc(it.n)}" placeholder="שם המצרך" oninput="editing.ingredients[${i}].n=this.value">
     <button class="del" onclick="editing.ingredients.splice(${i},1);drawEditor()">✕</button></div>`;
@@ -827,7 +844,6 @@ function pickPhoto(inp){
 async function saveRecipe(){
   const e=editing;
   if(!e.title.trim()){ toast('צריך שם למתכון'); return; }
-  if(!(e.cats||[]).length){ toast('בחר לפחות קטגוריה אחת'); return; }
   e.ingredients=e.ingredients.filter(i=>i.n && i.n.trim())
     .map(i=>({a: i.a===''||i.a===null?null:(parseFloat(String(i.a).replace(',','.'))||null), u:i.u, n:i.n.trim()}));
   e.steps=e.steps.map(s=>s.trim()).filter(Boolean);
@@ -942,7 +958,7 @@ function addManual(){
     <div class="field"><label class="f">מה צריך לקנות</label><input class="t" id="mName" placeholder="לחם"></div>
     <div class="two">
       <div class="field"><label class="f">כמות</label><input class="t" id="mAmt" type="number" step="any" placeholder="2"></div>
-      <div class="field"><label class="f">יחידה</label><select class="t" id="mUnit">${UNITS.map(u=>`<option value="${u}">${u||'—'}</option>`).join('')}</select></div>
+      <div class="field"><label class="f">יחידה</label><select class="t" id="mUnit">${UNITS.map(u=>`<option value="${esc(u)}">${esc(u)||'—'}</option>`).join('')}</select></div>
     </div>
     <div class="btnrow"><button class="btn" style="flex:1" onclick="saveManual()">הוספה</button>
     <button class="btn ghost" style="flex:1" onclick="closeModal()">ביטול</button></div>`);
@@ -1052,7 +1068,7 @@ function importAll(inp){
       for(const r of arr){
         if(!r.title) continue;
         if(RECIPES.some(x=>x.id===r.id)) r.id=uid();
-        if(!r.cats) r.cats=r.cat?[r.cat]:['אחר'];
+        if(!r.cats) r.cats=r.cat?[r.cat]:[];
         try{ await apiPost({action:'saveRecipe', recipe:r}); RECIPES.unshift(r); n++; }catch(e){}
       }
       if(d.categories){ CUSTOM=[...new Set(CUSTOM.concat(d.categories))]; try{ await apiPost({action:'saveCategories',categories:CUSTOM}); }catch(e){} }
